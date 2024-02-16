@@ -6,6 +6,8 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://GitHub.com/Naereen/StrapDown.js/graphs/commit-activity)
 [![GitHub license](https://img.shields.io/github/license/Naereen/StrapDown.js.svg)](https://github.com/Naereen/StrapDown.js/blob/master/LICENSE)
 
+This repository is forked from [the official RWARE repo](https://github.com/semitable/robotic-warehouse)
+
 <h1>Table of Contents</h1>
 
 - [Environment Description](#environment-description)

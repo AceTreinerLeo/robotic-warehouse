@@ -13,6 +13,14 @@ from typing import List, Tuple, Optional, Dict
 
 import networkx as nx
 
+import rclpy
+import numpy as np
+from rclpy.node import Node
+from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Pose
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
+from transforms3d._gohlketransforms import quaternion_from_euler
+
 _AXIS_Z = 0
 _AXIS_Y = 1
 _AXIS_X = 2
@@ -141,6 +149,68 @@ class Shelf(Entity):
     @property
     def collision_layers(self):
         return (_LAYER_SHELFS,)
+
+class ROS_Agent(Node):
+    def __init__(self, agent_id, agent_prefix):
+        super().__init__('agent_node_' + str(agent_id))
+
+        vel_string = agent_prefix + str(agent_id) + "/cmd_vel"
+        odom_string = agent_prefix + str(agent_id) + "/odom"
+        initial_pose_string = agent_prefix + str(agent_id) + "/initialpose"
+        goal_pose_string = agent_prefix + str(agent_id) + "/goal_pose"
+
+        self.pose = Pose()
+        self.position_x = 0.0
+        self.position_y = 0.0
+        self.direction = Direction.UP
+
+        self.twist_publisher = self.create_publisher(Twist, vel_string, 10)
+        self.odom_subscription = self.create_subscription(Odometry, odom_string, self.odom_callback, 10)
+        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, initial_pose_string, 10)
+        self.goal_pose_publisher = self.create_publisher(PoseStamped, goal_pose_string, 10)
+
+    def odom_callback(self, msg):
+        self.pose = msg.pose.pose
+
+    def set_initial_pose(self, x, y):
+        initial_pose = PoseWithCovarianceStamped()
+        initial_pose.header.frame_id = "map"
+        initial_pose.pose.pose.position.x = x
+        initial_pose.pose.pose.position.y = y
+        initial_pose.pose.pose.position.z = 0.0
+        initial_pose.pose.pose.orientation = self.pose_.orientation
+        self.initial_pose_publisher.publish(initial_pose)
+
+    def move_to(self, point){
+        message = PoseStamped()
+        message.header.frame_id = "map"
+        message.pose.position.x = point.first
+        message.pose.position.y = point.second
+        message.pose.position.z = 0.0
+        self.goal_pose_publisher.publish(message)
+
+    def stop(self):
+        message = Twist()
+        message.linear.x = 0
+        message.linear.y = 0
+        message.angular.z = 0
+        self.twist_publisher.publish(message)
+
+    def turn(self, right: bool):
+        wraplist = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+        if right:
+            self.direction = wraplist[(wraplist.index(self.direction) + 1) % len(wraplist)]
+        else:
+            self.direction = wraplist[(wraplist.index(self.direction) - 1) % len(wraplist)]
+
+        message = PoseStamped()
+        message.header.frame_id = "map"
+        euler_angles = [0.0, 0.0, wraplist.index(self.direction) * np.pi * 0.5]
+        message.pose.orientation = quaternion_from_euler(euler_angles)
+        message.pose.position = self.pose.position
+
+        self.goal_pose_publisher.publish(message)
+}
 
 
 class Warehouse(gym.Env):
@@ -846,6 +916,24 @@ class Warehouse(gym.Env):
 
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
+        '''
+        for agent, action in zip(self.agents, actions):
+            agent_id = agent.agent_id
+            action_id = action[0]
+
+            if action_id == Action.NOOP:
+                #nav2 stop
+            elif action_id == Action.FORWARD:
+                #nav2 goal to next point
+            elif action_id == Action.LEFT:
+                
+                #nav2 turn 90 degrees left
+            elif action_id == Action.RIGHT:
+                #nav2 turn 90 degrees right
+        '''
+
+
+
         return new_obs, list(rewards), dones, info
 
     def render(self, mode="human"):
