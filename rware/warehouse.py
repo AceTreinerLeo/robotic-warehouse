@@ -12,7 +12,7 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict
 
 import networkx as nx
-
+'''
 import rclpy
 import numpy as np
 from rclpy.node import Node
@@ -20,7 +20,7 @@ from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Pos
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from transforms3d._gohlketransforms import quaternion_from_euler
-
+'''
 _AXIS_Z = 0
 _AXIS_Y = 1
 _AXIS_X = 2
@@ -149,7 +149,7 @@ class Shelf(Entity):
     @property
     def collision_layers(self):
         return (_LAYER_SHELFS,)
-
+'''
 class ROS_Agent(Node):
     def __init__(self, agent_id, agent_prefix):
         super().__init__('agent_node_' + str(agent_id))
@@ -181,7 +181,7 @@ class ROS_Agent(Node):
         initial_pose.pose.pose.orientation = self.pose_.orientation
         self.initial_pose_publisher.publish(initial_pose)
 
-    def move_to(self, point){
+    def move_to(self, point):
         message = PoseStamped()
         message.header.frame_id = "map"
         message.pose.position.x = point.first
@@ -210,7 +210,7 @@ class ROS_Agent(Node):
         message.pose.position = self.pose.position
 
         self.goal_pose_publisher.publish(message)
-}
+'''
 
 
 class Warehouse(gym.Env):
