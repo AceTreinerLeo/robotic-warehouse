@@ -19,7 +19,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Pose
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from transforms3d._gohlketransforms import quaternion_from_euler
+from transforms3d._gohlketransforms import quaternion_from_euler, euler_from_quaternion
 
 _AXIS_Z = 0
 _AXIS_Y = 1
@@ -171,16 +171,39 @@ class ROS_Agent(Node):
         self.pose.position.z = 0.0
         self.direction = dir_
         self.pose.orientation = quaternion_from_euler(0.0, 0.0, np.pi * 0.5 * self.direction.value)
+        
+        self.goal_pose = Pose()
+        self.goal_tolerance = 0.5
+        self.angle_tolerance = 0.05
+        self.reached_goal = False
 
         self.twist_publisher = self.create_publisher(Twist, vel_string, 10)
         self.odom_subscription = self.create_subscription(Odometry, odom_string, self.odom_callback, 10)
         self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, initial_pose_string, 10)
         self.goal_pose_publisher = self.create_publisher(PoseStamped, goal_pose_string, 10)
+        self.timer = self.create_timer(0.2, self.timer_callback)
 
         counter += 1
 
     def odom_callback(self, msg):
         self.pose = msg.pose.pose
+
+    def timer_callback(self):
+        delta_x = self.goal_pose.pose.position.x - self.pose.position.x
+        delta_y = self.goal_pose.pose.position.y - self.pose.position.y
+
+        goal_angle = euler_from_quaternion(self.goal_pose.pose.orientation)[2]
+        curr_angle = euler_from_quaternion(self.pose.orientation)[2]
+        theta = goal_angle - curr_angle
+
+        if (abs(delta_x) <= self.goal_tolerance and abs(delta_y) <= self.goal_tolerance and theta <= self.angle_tolerance):
+            self.reached_goal = True
+
+    def reset_goal(self):
+        self.reached_goal = False
+
+    def check_goal_reached(self) -> bool:
+        return self.reached_goal
 
     def set_initial_pose(self):
         initial_pose = PoseWithCovarianceStamped()
@@ -192,6 +215,7 @@ class ROS_Agent(Node):
         self.initial_pose_publisher.publish(initial_pose)
 
     def move_to(self, point):
+        self.goal_pose = point
         message = PoseStamped()
         message.header.frame_id = "map"
         message.pose.position.x = point[0]
@@ -217,7 +241,7 @@ class ROS_Agent(Node):
         message.header.frame_id = "map"
         message.pose.orientation = quaternion_from_euler(0.0, 0.0, wraplist.index(self.direction) * np.pi * 0.5)
         message.pose.position = self.pose.position
-
+        self.goal_pose = message.pose
         self.goal_pose_publisher.publish(message)
 
 '''
@@ -948,9 +972,14 @@ class Warehouse(gym.Env):
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
 
-        '''
-        #NEW STUFF ADDED FOR ROS
-        '''
+        return new_obs, list(rewards), dones, info
+    
+    '''
+    #NEW STUFF ADDED FOR ROS
+    '''
+    
+    def ros_step(self, actions: List[Action]):
+
         #Internally, the warehouse class still does its own logic
         #The ROS agent just needs to transmit the output through publishers/subscribers. 
         for agent, action in zip(self.agents, actions):
@@ -959,26 +988,25 @@ class Warehouse(gym.Env):
 
             if action_id == Action.NOOP:
                 #nav2 stop
-                ros_agents[ros_id].stop()
+                self.ros_agents[ros_id].stop()
             elif action_id == Action.FORWARD:
                 #nav2 goal to next point
                 goal = agent.req_location(self.grid_size)
-                ros_agents[ros_id].move_to(goal)
+                self.ros_agents[ros_id].move_to(goal)
             elif action_id == Action.LEFT:
                 #nav2 turn 90 degrees left
-                ros_agents[ros_id].turn(right = False)
+                self.ros_agents[ros_id].turn(right = False)
             elif action_id == Action.RIGHT:
                 #nav2 turn 90 degrees right
-                ros_agents[ros_id].turn(right = True)
+                self.ros_agents[ros_id].turn(right = True)
             else:
                 #TO REPLACE WITH SHELF LOADING BEHAVIOUR
+                self.ros_agents[ros_id].stop()
                 continue
 
-        '''
-        #END OF NEW STUFF ADDED FOR ROS
-        '''
-
-        return new_obs, list(rewards), dones, info
+    '''
+    #END OF NEW STUFF ADDED FOR ROS
+    '''
 
     def render(self, mode="human"):
         if not self.renderer:
@@ -994,7 +1022,7 @@ class Warehouse(gym.Env):
     def seed(self, seed=None):
         ...
     
-
+'''
 if __name__ == "__main__":
     env = Warehouse(9, 8, 3, 10, 3, 1, 5, None, None, RewardType.GLOBAL)
     env.reset()
@@ -1010,3 +1038,4 @@ if __name__ == "__main__":
         # env.render()
         actions = env.action_space.sample()
         env.step(actions)
+'''
