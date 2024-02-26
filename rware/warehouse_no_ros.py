@@ -4,7 +4,7 @@ from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
 
-from .utils import MultiAgentActionSpace, MultiAgentObservationSpace
+from rware.utils import MultiAgentActionSpace, MultiAgentObservationSpace
 
 from enum import Enum
 import numpy as np
@@ -12,14 +12,6 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict
 
 import networkx as nx
-
-import rclpy
-import numpy as np
-from rclpy.node import Node
-from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Pose, Quaternion
-from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
-from transforms3d._gohlketransforms import quaternion_from_euler, euler_from_quaternion
 
 _AXIS_Z = 0
 _AXIS_Y = 1
@@ -55,10 +47,9 @@ class Action(Enum):
 
 class Direction(Enum):
     UP = 0
-    RIGHT = 1
-    DOWN = 2
-    LEFT = 3
-    
+    DOWN = 1
+    LEFT = 2
+    RIGHT = 3
 
 
 class RewardType(Enum):
@@ -150,114 +141,6 @@ class Shelf(Entity):
     @property
     def collision_layers(self):
         return (_LAYER_SHELFS,)
-
-'''
-#NEW STUFF ADDED FOR ROS
-'''
-
-class ROS_Agent(Node):
-    counter = 0
-
-    def __init__(self, agent_prefix, x: int, y: int, dir_: Direction):
-        super().__init__('agent_node_' + str(ROS_Agent.counter))
-        vel_string = agent_prefix + str(ROS_Agent.counter) + "/cmd_vel"
-        odom_string = agent_prefix + str(ROS_Agent.counter) + "/odom"
-        initial_pose_string = agent_prefix + str(ROS_Agent.counter) + "/initialpose"
-        goal_pose_string = agent_prefix + str(ROS_Agent.counter) + "/goal_pose"
-
-        self.pose = Pose()
-        self.pose.position.x = float(x)
-        self.pose.position.y = float(y)
-        self.pose.position.z = 0.0
-        self.direction = dir_
-        quat = quaternion_from_euler(0.0, 0.0, np.pi * 0.5 * self.direction.value)
-        self.pose.orientation.w = quat[0]
-        self.pose.orientation.x = quat[1]
-        self.pose.orientation.y = quat[2]
-        self.pose.orientation.z = quat[3]
-        
-        self.goal_pose = Pose()
-        self.goal_tolerance = 0.5
-        self.angle_tolerance = 0.05
-        self.reached_goal = False
-
-        self.twist_publisher = self.create_publisher(Twist, vel_string, 10)
-        self.odom_subscription = self.create_subscription(Odometry, odom_string, self.odom_callback, 10)
-        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, initial_pose_string, 10)
-        self.goal_pose_publisher = self.create_publisher(PoseStamped, goal_pose_string, 10)
-        self.timer = self.create_timer(0.2, self.timer_callback)
-
-        ROS_Agent.counter += 1
-
-    def odom_callback(self, msg):
-        self.pose = msg.pose.pose
-
-    def timer_callback(self):
-        delta_x = self.goal_pose.position.x - self.pose.position.x
-        delta_y = self.goal_pose.position.y - self.pose.position.y
-
-        goal_quat = [self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w]
-        curr_quat = [self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z, self.pose.orientation.w]
-
-        goal_angle = (euler_from_quaternion(goal_quat))[2]
-        curr_angle = (euler_from_quaternion(curr_quat))[2]
-        theta = goal_angle - curr_angle
-
-        if (abs(delta_x) <= self.goal_tolerance and abs(delta_y) <= self.goal_tolerance and theta <= self.angle_tolerance):
-            self.reached_goal = True
-
-    def reset_goal(self):
-        self.reached_goal = False
-
-    def check_goal_reached(self) -> bool:
-        return self.reached_goal
-
-    def set_initial_pose(self):
-        initial_pose = PoseWithCovarianceStamped()
-        initial_pose.header.frame_id = "map"
-        initial_pose.pose.pose.position.x = self.pose.position.x
-        initial_pose.pose.pose.position.y = self.pose.position.y
-        initial_pose.pose.pose.position.z = 0.0
-        initial_pose.pose.pose.orientation = self.pose.orientation
-        self.initial_pose_publisher.publish(initial_pose)
-
-    def move_to(self, point):
-        self.goal_pose = point
-        message = PoseStamped()
-        message.header.frame_id = "map"
-        message.pose.position.x = float(point[0])
-        message.pose.position.y = float(point[1])
-        message.pose.position.z = 0.0
-        self.goal_pose_publisher.publish(message)
-
-    def stop(self):
-        message = Twist()
-        message.linear.x = 0.0
-        message.linear.y = 0.0
-        message.angular.z = 0.0
-        self.twist_publisher.publish(message)
-
-    def turn(self, right: bool):
-        wraplist = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
-        if right:
-            self.direction = wraplist[(wraplist.index(self.direction) + 1) % len(wraplist)]
-        else:
-            self.direction = wraplist[(wraplist.index(self.direction) - 1) % len(wraplist)]
-
-        message = PoseStamped()
-        message.header.frame_id = "map"
-        quat = quaternion_from_euler(0.0, 0.0, wraplist.index(self.direction) * np.pi * 0.5)
-        message.pose.orientation.w = quat[0]
-        message.pose.orientation.x = quat[1]
-        message.pose.orientation.y = quat[2]
-        message.pose.orientation.z = quat[3]
-        message.pose.position = self.pose.position
-        self.goal_pose = message.pose
-        self.goal_pose_publisher.publish(message)
-
-'''
-#END OF NEW STUFF ADDED FOR ROS
-'''
 
 
 class Warehouse(gym.Env):
@@ -383,9 +266,6 @@ class Warehouse(gym.Env):
         self.request_queue = []
 
         self.agents: List[Agent] = []
-        
-        self.ros_agents: List[ROS_Agent] = []
-        self.initial_locs = []
 
         # default values:
         self.fast_obs = None
@@ -798,7 +678,7 @@ class Warehouse(gym.Env):
             if not self._is_highway(x, y)
         ]
 
-        '''
+        # spawn agents at random locations
         agent_locs = np.random.choice(
             np.arange(self.grid_size[0] * self.grid_size[1]),
             size=self.n_agents,
@@ -807,40 +687,10 @@ class Warehouse(gym.Env):
         agent_locs = np.unravel_index(agent_locs, self.grid_size)
         # and direction
         agent_dirs = np.random.choice([d for d in Direction], size=self.n_agents)
-        '''
-
-        '''
-        #NEW STUFF ADDED FOR ROS
-        '''
-
-        # spawn agents at random locations
-        agent_locs = self.initial_locs
-        # and direction
-        agent_dirs = np.full(self.n_agents, Direction.RIGHT)
-        #print(list(zip(agent_locs, agent_dirs)))
-        
-        for coord, dir_ in zip(agent_locs, agent_dirs):
-            self.ros_agents.append(ROS_Agent('agent_', coord[0], coord[1], dir_))
-            self.agents.append(Agent(coord[0], coord[1], dir_, self.msg_bits))
-
-        #self.ros_agents = [
-        #    ROS_Agent('agent_', x, y, dir_)
-        #    for x, y, dir_ in zip(agent_locs, agent_dirs)
-        #]
-
-        for agent in self.ros_agents:
-            agent.set_initial_pose()
-
-        print("New reset function")
-
-        '''
-        #END OF NEW STUFF ADDED FOR ROS
-        '''
-
-        #self.agents = [
-        #    Agent(x, y, dir_, self.msg_bits)
-        #    for x, y, dir_ in zip(*agent_locs, agent_dirs)
-        #]
+        self.agents = [
+            Agent(x, y, dir_, self.msg_bits)
+            for y, x, dir_ in zip(*agent_locs, agent_dirs)
+        ]
 
         self._recalc_grid()
 
@@ -852,10 +702,6 @@ class Warehouse(gym.Env):
         # for s in self.shelfs:
         #     self.grid[0, s.y, s.x] = 1
         # print(self.grid[0])
-
-    def get_ros_agents(self) -> List[ROS_Agent]:
-        print("get_ros_agents")
-        return self.ros_agents
 
     def step(
         self, actions: List[Action]
@@ -1000,53 +846,7 @@ class Warehouse(gym.Env):
 
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
-
         return new_obs, list(rewards), dones, info
-    
-    '''
-    #NEW STUFF ADDED FOR ROS
-    '''
-
-    def init_locations(self, init_loc):
-        self.initial_locs = init_loc
-    
-    def ros_step(self, actions: List[Action]):
-        #print (self.agents)
-        #print(actions)
-        #print(list(zip(self.agents, actions)))
-
-        #Internally, the warehouse class still does its own logic
-        #The ROS agent just needs to transmit the output through publishers/subscribers. 
-        for agent, action in zip(self.agents, actions):
-            ros_id = agent.id - 1
-            action_id = action
-
-            if action_id == Action.NOOP.value:
-                #nav2 stop
-                print("stop")
-                self.ros_agents[ros_id].stop()
-            elif action_id == Action.FORWARD.value:
-                #nav2 goal to next point
-                goal = agent.req_location(self.grid_size)
-                print("forward")
-                self.ros_agents[ros_id].move_to(goal)
-            elif action_id == Action.LEFT.value:
-                #nav2 turn 90 degrees left
-                print("left")
-                self.ros_agents[ros_id].turn(right = False)
-            elif action_id == Action.RIGHT.value:
-                #nav2 turn 90 degrees right
-                print("right")
-                self.ros_agents[ros_id].turn(right = True)
-            else:
-                #TO REPLACE WITH SHELF LOADING BEHAVIOUR
-                print("shelf")
-                self.ros_agents[ros_id].stop()
-                continue
-
-    '''
-    #END OF NEW STUFF ADDED FOR ROS
-    '''
 
     def render(self, mode="human"):
         if not self.renderer:
@@ -1062,7 +862,7 @@ class Warehouse(gym.Env):
     def seed(self, seed=None):
         ...
     
-'''
+
 if __name__ == "__main__":
     env = Warehouse(9, 8, 3, 10, 3, 1, 5, None, None, RewardType.GLOBAL)
     env.reset()
@@ -1078,4 +878,3 @@ if __name__ == "__main__":
         # env.render()
         actions = env.action_space.sample()
         env.step(actions)
-'''
