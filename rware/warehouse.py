@@ -19,7 +19,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped, Pose, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from transforms3d._gohlketransforms import quaternion_from_euler, euler_from_quaternion
+from transforms3d._gohlketransforms import quaternion_from_euler, euler_from_quaternion, quaternion_multiply
 
 _AXIS_Z = 0
 _AXIS_Y = 1
@@ -164,22 +164,25 @@ class ROS_Agent(Node):
         odom_string = agent_prefix + str(ROS_Agent.counter) + "/odom"
         initial_pose_string = agent_prefix + str(ROS_Agent.counter) + "/initialpose"
         goal_pose_string = agent_prefix + str(ROS_Agent.counter) + "/goal_pose"
+        self._id = ROS_Agent.counter
 
         self.pose = Pose()
-        self.pose.position.x = float(x)
-        self.pose.position.y = float(y)
+        self.pose.position.x = 2.0 * float(x)
+        self.pose.position.y = 2.0 * float(y)
         self.pose.position.z = 0.0
+        self.initial_x = self.pose.position.x
+        self.initial_y = self.pose.position.y
+
         self.direction = dir_
-        quat = quaternion_from_euler(0.0, 0.0, np.pi * 0.5 * self.direction.value)
-        self.pose.orientation.w = quat[0]
-        self.pose.orientation.x = quat[1]
-        self.pose.orientation.y = quat[2]
-        self.pose.orientation.z = quat[3]
+        self.initial_angle = np.pi * 0.5 * (self.direction.value - 1)
+        self.initial_quat = quaternion_from_euler(0.0, 0.0, self.initial_angle)
+        self.pose.orientation = Quaternion(x = self.initial_quat[1], y = self.initial_quat[2], z = self.initial_quat[3], w = self.initial_quat[0])
         
         self.goal_pose = Pose()
         self.goal_tolerance = 0.5
         self.angle_tolerance = 0.05
         self.reached_goal = False
+        self.angular_velocity = 0.5
 
         self.twist_publisher = self.create_publisher(Twist, vel_string, 10)
         self.odom_subscription = self.create_subscription(Odometry, odom_string, self.odom_callback, 10)
@@ -190,20 +193,37 @@ class ROS_Agent(Node):
         ROS_Agent.counter += 1
 
     def odom_callback(self, msg):
-        self.pose = msg.pose.pose
+        self.pose.position.x = msg.pose.pose.position.x + self.initial_x
+        self.pose.position.y = msg.pose.pose.position.y + self.initial_y
+
+        msg_quat = [ msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z]
+        #msg_angle = euler_from_quaternion(msg_quat)
+
+        quat = quaternion_multiply(self.initial_quat, msg_quat)
+        self.pose.orientation = Quaternion(x = quat[1], y = quat[2], z = quat[3], w = quat[0])
+
+        print("Agent id %d" %(self._id))
+        print(self.pose.orientation)
+        #print(self.pose.position)
+        #print(self.pose.orientation)
 
     def timer_callback(self):
         delta_x = self.goal_pose.position.x - self.pose.position.x
         delta_y = self.goal_pose.position.y - self.pose.position.y
 
-        goal_quat = [self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z, self.goal_pose.orientation.w]
-        curr_quat = [self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z, self.pose.orientation.w]
+        goal_quat = [self.goal_pose.orientation.w, self.goal_pose.orientation.x, self.goal_pose.orientation.y, self.goal_pose.orientation.z]
+        curr_quat = [self.pose.orientation.w, self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z]
 
         goal_angle = (euler_from_quaternion(goal_quat))[2]
         curr_angle = (euler_from_quaternion(curr_quat))[2]
+
+        #print("Agent ID: %d" % (self._id) )
+        #print(euler_from_quaternion(curr_quat))
+        #print(goal_quat)
+        #print(euler_from_quaternion(goal_quat))
         theta = goal_angle - curr_angle
 
-        if (abs(delta_x) <= self.goal_tolerance and abs(delta_y) <= self.goal_tolerance and theta <= self.angle_tolerance):
+        if (abs(delta_x) <= self.goal_tolerance and abs(delta_y) <= self.goal_tolerance and abs(theta) <= self.angle_tolerance):
             self.reached_goal = True
 
     def reset_goal(self):
@@ -222,12 +242,14 @@ class ROS_Agent(Node):
         self.initial_pose_publisher.publish(initial_pose)
 
     def move_to(self, point):
-        self.goal_pose = point
         message = PoseStamped()
         message.header.frame_id = "map"
-        message.pose.position.x = float(point[0])
-        message.pose.position.y = float(point[1])
-        message.pose.position.z = 0.0
+        #print("forward to %d, %d" %(point[0], point[1]))
+        self.goal_pose.position.x = 2.0 * float(point[0])
+        self.goal_pose.position.y = 2.0 * float(point[1])
+        self.goal_pose.position.z = 0.0
+        self.goal_pose.orientation = self.pose.orientation
+        message.pose = self.goal_pose
         self.goal_pose_publisher.publish(message)
 
     def stop(self):
@@ -238,22 +260,46 @@ class ROS_Agent(Node):
         self.twist_publisher.publish(message)
 
     def turn(self, right: bool):
-        wraplist = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+        wraplist = [ Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT ]
+        direction = Direction.UP
         if right:
-            self.direction = wraplist[(wraplist.index(self.direction) + 1) % len(wraplist)]
+            direction = wraplist[(wraplist.index(self.direction) + 1) % len(wraplist)]
         else:
-            self.direction = wraplist[(wraplist.index(self.direction) - 1) % len(wraplist)]
+            direction = wraplist[(wraplist.index(self.direction) - 1) % len(wraplist)]
 
+        curr_quat = [self.pose.orientation.w, self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z]
+        curr_angles = euler_from_quaternion(curr_quat)
+        goal_angle = np.pi * 0.5 * (direction.value - 1)
+
+        print("Agent %d" % (self._id))
+        print(curr_angles)
+
+        if (abs(goal_angle - curr_angles[2]) > self. goal_tolerance):
+            message = Twist()
+            message.linear.x = 0.0
+            message.linear.y = 0.0
+            message.linear.z = 0.0
+            if right:
+                message.angular.z = self.angular_velocity
+            else:
+                message.angular.z = -self.angular_velocity
+            self.twist_publisher.publish(message)
+        else:
+            self.stop()
+
+        '''
         message = PoseStamped()
         message.header.frame_id = "map"
-        quat = quaternion_from_euler(0.0, 0.0, wraplist.index(self.direction) * np.pi * 0.5)
-        message.pose.orientation.w = quat[0]
-        message.pose.orientation.x = quat[1]
-        message.pose.orientation.y = quat[2]
-        message.pose.orientation.z = quat[3]
-        message.pose.position = self.pose.position
-        self.goal_pose = message.pose
+        quat = quaternion_from_euler(0.0, 0.0, np.pi * 0.5 * (direction.value - 1) )
+
+        self.goal_pose.orientation.x = quat[0]
+        self.goal_pose.orientation.y = quat[1]
+        self.goal_pose.orientation.z = quat[2]
+        self.goal_pose.orientation.w = quat[3]
+        self.goal_pose.position = self.pose.position
+        message.pose = self.goal_pose
         self.goal_pose_publisher.publish(message)
+        '''
 
 '''
 #END OF NEW STUFF ADDED FOR ROS
@@ -1019,28 +1065,28 @@ class Warehouse(gym.Env):
         #The ROS agent just needs to transmit the output through publishers/subscribers. 
         for agent, action in zip(self.agents, actions):
             ros_id = agent.id - 1
-            action_id = action
+            agent.req_action = action
 
-            if action_id == Action.NOOP.value:
+            if action == Action.NOOP.value:
                 #nav2 stop
-                print("stop")
+                #print("Agent %d stop" %(agent.id))
                 self.ros_agents[ros_id].stop()
-            elif action_id == Action.FORWARD.value:
+            elif action == Action.FORWARD.value:
                 #nav2 goal to next point
                 goal = agent.req_location(self.grid_size)
-                print("forward")
+                #print("Agent %d forward" %(agent.id))
                 self.ros_agents[ros_id].move_to(goal)
-            elif action_id == Action.LEFT.value:
+            elif action == Action.LEFT.value:
                 #nav2 turn 90 degrees left
-                print("left")
+                #print("Agent %d left" %(agent.id))
                 self.ros_agents[ros_id].turn(right = False)
-            elif action_id == Action.RIGHT.value:
+            elif action == Action.RIGHT.value:
                 #nav2 turn 90 degrees right
-                print("right")
+                #print("Agent %d right" %(agent.id))
                 self.ros_agents[ros_id].turn(right = True)
             else:
                 #TO REPLACE WITH SHELF LOADING BEHAVIOUR
-                print("shelf")
+                #print("Agent %d shelf" %(agent.id))
                 self.ros_agents[ros_id].stop()
                 continue
 
