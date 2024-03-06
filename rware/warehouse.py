@@ -268,7 +268,6 @@ class Warehouse(gym.Env):
 
         self.agents: List[Agent] = []
         
-        #self.ros_agents: List[ROS_Agent] = []
         self.initial_locs = []
 
         # default values:
@@ -701,30 +700,19 @@ class Warehouse(gym.Env):
         agent_locs = self.initial_locs
         # and direction
         agent_dirs = np.full(self.n_agents, Direction.RIGHT)
-        #print(list(zip(agent_locs, agent_dirs)))
         
         for coord, dir_ in zip(agent_locs, agent_dirs):
-            #self.ros_agents.append(ROS_Agent('agent_', coord[0], coord[1], dir_))
             self.agents.append(Agent(coord[0], coord[1], dir_, self.msg_bits))
 
-        #self.ros_agents = [
-        #    ROS_Agent('agent_', x, y, dir_)
-        #    for x, y, dir_ in zip(agent_locs, agent_dirs)
-        #]
-
-        #for agent in self.ros_agents:
-        #    agent.set_initial_pose()
-
-        #print("New reset function")
-
-        '''
-        #END OF NEW STUFF ADDED FOR ROS
-        '''
 
         #self.agents = [
         #    Agent(x, y, dir_, self.msg_bits)
         #    for x, y, dir_ in zip(*agent_locs, agent_dirs)
         #]
+
+        '''
+        #END OF NEW STUFF ADDED FOR ROS
+        '''
 
         self._recalc_grid()
 
